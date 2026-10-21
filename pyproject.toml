@@ -1,0 +1,20 @@
+[project]
+name = "voicehome"
+version = "0.1.0"
+description = "Voice assistant prototype (STT -> LLM -> Nature Remo -> TTS)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "faster-whisper>=1.2.1",
+    "numpy>=2.5.4",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
+    "sounddevice>=0.5.6",
+]
+
+[project.scripts]
+remo = "voicehome.remo:main"
+voicehome = "voicehome.assistant:main"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
