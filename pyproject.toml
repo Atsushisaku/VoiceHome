@@ -5,6 +5,7 @@ description = "Voice assistant prototype (STT -> LLM -> Nature Remo -> TTS)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "faster-whisper>=1.2.1",
+    "mcp>=2.3.0",
     "numpy>=2.5.4",
     "python-dotenv>=1.2.4",
     "requests>=2.34.2",

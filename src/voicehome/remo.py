@@ -83,7 +83,7 @@ def set_aircon_power(on: bool, name: str | None = None, dry_run: bool = False) -
     return f"{ac.nickname} を{action}ました"
 
 
-def _describe(a: Appliance) -> str:
+def describe(a: Appliance) -> str:
     line = f"{a.type:<6} {a.nickname}  ({a.id})"
     if a.type == "AC" and a.raw.get("settings"):
         s = a.raw["settings"]
@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "list":
             for a in list_appliances():
-                print(_describe(a))
+                print(describe(a))
         else:
             dry_run = args.dry_run or os.environ.get("REMO_DRY_RUN") == "1"
             print(set_aircon_power(args.power == "on", args.name, dry_run))

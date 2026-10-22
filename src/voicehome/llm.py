@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,16 +11,20 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = "haiku"
 TIMEOUT_SEC = 90
 
+# remo を MCP サーバーとして起動する。いま動いている venv の Python をそのまま使う
+MCP_CONFIG = json.dumps({
+    "mcpServers": {
+        "remo": {"command": sys.executable, "args": ["-m", "voicehome.remo_mcp"]},
+    },
+})
+
 SYSTEM_PROMPT = """あなたは家庭用の音声アシスタントです。返答はそのまま音声で読み上げられます。
 
-使えるコマンド（Bash で実行する）:
-- uv run remo list                       登録済みの家電と、エアコンの現在の設定を表示
-- uv run remo aircon on [--name 名前]     エアコンをつける
-- uv run remo aircon off [--name 名前]    エアコンを消す
+家電は remo のツールで操作する（list_appliances で一覧と状態、set_aircon_power でエアコンの電源）。
 
 規則:
-- 家電の操作が必要なときだけコマンドを実行する。状態がわからなければ先に remo list で確かめる
-- 上のコマンド以外は実行しない。できないことは「できません」と短く伝える
+- 家電の操作が必要なときだけツールを使う。状態がわからなければ先に list_appliances で確かめる
+- できないことは「できません」と短く伝える
 - 返答は日本語の話し言葉で 1〜2 文。記号・箇条書き・Markdown は使わない
 """
 
@@ -38,12 +43,14 @@ def ask(utterance: str, model: str | None = None) -> LlmResult:
         "--output-format", "json",
         "--model", model or os.environ.get("LLM_MODEL", DEFAULT_MODEL),
         "--system-prompt", SYSTEM_PROMPT,
-        "--tools", "Bash",
-        "--allowedTools", "Bash(uv run remo:*)",
+        # 組み込みツール（Bash・Read 等）は一切渡さない。.env を読む手段をなくすため
+        "--tools", "",
+        "--mcp-config", MCP_CONFIG,
+        "--allowedTools", "mcp__remo",
         # 許可リスト外は確認を出さずに拒否する（無人で止まらないように）
         "--permission-mode", "dontAsk",
         "--permission-prompts", "none",
-        # ユーザー設定の許可ルールや MCP を持ち込まない
+        # ユーザー設定の許可ルールや、remo 以外の MCP を持ち込まない
         "--setting-sources", "project",
         "--strict-mcp-config",
         "--no-session-persistence",
