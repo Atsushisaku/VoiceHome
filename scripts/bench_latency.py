@@ -1,4 +1,4 @@
-"""録音 / STT / claude -p / TTS の各段の秒数を測る。
+"""録音 / STT / LLM / TTS の各段の秒数を測る。LLM は LLM_BACKEND（api / cli）に従う。
 
     uv run python scripts/bench_latency.py                    # マイクで 1 回録音して測る
     uv run python scripts/bench_latency.py --wav in.wav       # 録音済みの WAV を使う
@@ -14,6 +14,8 @@ import statistics
 import sys
 import tempfile
 import time
+
+from dotenv import load_dotenv
 
 from voicehome import audio, llm
 from voicehome.stt import Transcriber
@@ -36,6 +38,7 @@ def main() -> int:
     parser.add_argument("--save", help="録音した音声をこのパスに保存")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
+    load_dotenv()
     os.environ["REMO_DRY_RUN"] = "1"
     speaker = Speaker()
     rows: list[tuple[str, str, str]] = []
@@ -70,9 +73,11 @@ def main() -> int:
         rows.append((f"STT {size}", f"{statistics.median(times):.2f}", f"「{text}」 中央値/{args.runs}回"))
         transcript = transcript or text  # LLM には最初のモデルの結果を渡す
 
-    print("claude -p …", flush=True)
+    backend = os.environ.get("LLM_BACKEND", "api")
+    print(f"LLM（{backend}）…", flush=True)
     result, llm_sec = timed(llm.ask, transcript)
-    rows.append(("claude -p", f"{llm_sec:.2f}", f"API {result.duration_ms / 1000:.2f}s / ${result.cost_usd:.4f} 「{result.text}」"))
+    note = f"API {result.duration_ms / 1000:.2f}s / ${result.cost_usd:.4f} " if backend == "cli" else ""
+    rows.append((f"LLM {backend}", f"{llm_sec:.2f}", f"{note}「{result.text}」"))
 
     reply = result.text or "テストです"
     times = [timed(speaker.synthesize, reply)[1] for _ in range(args.runs)]

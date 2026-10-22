@@ -2,6 +2,7 @@
 
     remo list
     remo aircon on|off [--name ニックネーム] [--dry-run]
+    remo light on|off|night|... [--name ニックネーム] [--dry-run]
 
 トークンは環境変数または .env の NATURE_REMO_TOKEN から読む。
 環境変数 REMO_DRY_RUN=1 のときは --dry-run と同じ扱い（claude -p 経由の試験用）。
@@ -59,16 +60,21 @@ def list_appliances() -> list[Appliance]:
     ]
 
 
-def find_aircon(name: str | None = None) -> Appliance:
-    aircons = [a for a in list_appliances() if a.type == "AC"]
+def find_one(type_: str, label: str, name: str | None = None) -> Appliance:
+    """種類（AC / LIGHT）とニックネームで 1 台に絞る。"""
+    found = [a for a in list_appliances() if a.type == type_]
     if name:
-        aircons = [a for a in aircons if name in a.nickname]
-    if not aircons:
-        raise RemoError("該当するエアコンが見つかりません" + (f"（--name {name}）" if name else ""))
-    if len(aircons) > 1:
-        names = "、".join(a.nickname for a in aircons)
-        raise RemoError(f"エアコンが複数あります。--name で指定してください: {names}")
-    return aircons[0]
+        found = [a for a in found if name in a.nickname]
+    if not found:
+        raise RemoError(f"該当する{label}が見つかりません" + (f"（--name {name}）" if name else ""))
+    if len(found) > 1:
+        names = "、".join(a.nickname for a in found)
+        raise RemoError(f"{label}が複数あります。--name で指定してください: {names}")
+    return found[0]
+
+
+def find_aircon(name: str | None = None) -> Appliance:
+    return find_one("AC", "エアコン", name)
 
 
 def set_aircon_power(on: bool, name: str | None = None, dry_run: bool = False) -> str:
@@ -83,12 +89,44 @@ def set_aircon_power(on: bool, name: str | None = None, dry_run: bool = False) -
     return f"{ac.nickname} を{action}ました"
 
 
+# 照明のボタン名と、返答に使う言い方。実際に使えるボタンは機器ごとに Remo の登録内容で決まる
+LIGHT_BUTTON_LABELS = {
+    "on": "つけ",
+    "off": "消し",
+    "on-100": "全灯にし",
+    "on-favorite": "お気に入りの明るさにし",
+    "night": "常夜灯にし",
+    "bright-up": "明るくし",
+    "bright-down": "暗くし",
+    "colortemp-up": "白っぽくし",
+    "colortemp-down": "暖かい色にし",
+}
+
+
+def set_light(button: str, name: str | None = None, dry_run: bool = False) -> str:
+    """照明のボタンを押し、結果の一文を返す。"""
+    light = find_one("LIGHT", "照明", name)
+    available = [b["name"] for b in light.raw.get("light", {}).get("buttons", [])]
+    if button not in available:
+        raise RemoError(f"{light.nickname} にボタン {button} はありません。使えるもの: {', '.join(available)}")
+    action = LIGHT_BUTTON_LABELS.get(button, f"{button} にし")
+    if dry_run:
+        return f"[dry-run] {light.nickname} を{action}ます（POST /appliances/{light.id}/light button={button}）"
+    _request("POST", f"/appliances/{light.id}/light", data={"button": button})
+    return f"{light.nickname} を{action}ました"
+
+
 def describe(a: Appliance) -> str:
     line = f"{a.type:<6} {a.nickname}  ({a.id})"
     if a.type == "AC" and a.raw.get("settings"):
         s = a.raw["settings"]
         power = "OFF" if s.get("button") == "power-off" else "ON"
         line += f"  電源={power} モード={s.get('mode')} 温度={s.get('temp')}"
+    if a.type == "LIGHT" and a.raw.get("light"):
+        light = a.raw["light"]
+        state = light.get("state", {})
+        buttons = ",".join(b["name"] for b in light.get("buttons", []))
+        line += f"  電源={state.get('power', '?').upper()} ボタン={buttons}"
     return line
 
 
@@ -103,6 +141,10 @@ def main(argv: list[str] | None = None) -> int:
     ac.add_argument("power", choices=["on", "off"])
     ac.add_argument("--name", help="エアコンのニックネーム（部分一致）。複数台あるときに指定")
     ac.add_argument("--dry-run", action="store_true", help="送信せずに内容だけ表示")
+    lt = sub.add_parser("light", help="照明のボタン操作")
+    lt.add_argument("button", choices=list(LIGHT_BUTTON_LABELS))
+    lt.add_argument("--name", help="照明のニックネーム（部分一致）。複数台あるときに指定")
+    lt.add_argument("--dry-run", action="store_true", help="送信せずに内容だけ表示")
     args = parser.parse_args(argv)
 
     try:
@@ -111,7 +153,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(describe(a))
         else:
             dry_run = args.dry_run or os.environ.get("REMO_DRY_RUN") == "1"
-            print(set_aircon_power(args.power == "on", args.name, dry_run))
+            if args.command == "aircon":
+                print(set_aircon_power(args.power == "on", args.name, dry_run))
+            else:
+                print(set_light(args.button, args.name, dry_run))
     except (RemoError, requests.RequestException) as e:
         print(f"エラー: {e}", file=sys.stderr)
         return 1
