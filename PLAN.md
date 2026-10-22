@@ -28,7 +28,9 @@
 ## 進捗（2026-10-22）
 - 済：`git init`・`uv init`（3.12 固定）・VOICEVOX CPU 0.25.2 導入（エンジン単体は `vv-engine/run.exe`）
 - 済（コード）：`remo` CLI、`voicehome`（音声 / `--text` / `--dry-run` / `--no-tts`）、`scripts/bench_latency.py`
-- 未：実機確認（`.env` のトークン待ち）、マイク録音での計測
+- 済（2026-10-22 外出中に実施）：トークン疎通（`remo list` でエアコン・洋室照明を取得）、`--dry-run` で定型経路・LLM 経路とも送信内容まで確認。エアコンには一度も送信していない
+- 済：LLM 経路を MCP 化（下記）
+- 未：実機での ON/OFF、マイク録音での計測
 
 ### 遅延計測（1 回目、入力は VOICEVOX の合成音声「今日ちょっと暑いね」1.57 秒）
 | 段 | 秒 | 備考 |
@@ -42,9 +44,12 @@
 
 ### 分かったこと
 - `claude --bare` はサブスク（OAuth）を読まないので使えない
-- `--allowedTools "Bash(uv run remo:*)"` に `--permission-mode dontAsk` を足しても、**読み取り専用コマンド（`cat`・`ls`）は通る**（書き込みは拒否されることは確認済み）。`.env` を読める状態なので、厳密に縛るなら remo を MCP サーバーにして `--tools ""` にする
+- `--allowedTools "Bash(uv run remo:*)"` に `--permission-mode dontAsk` を足しても、**読み取り専用コマンド（`cat`・`ls`）は通る**（書き込みは拒否される）
+- `permissions.deny` に `Read(./.env)` を足すと `cat`・`grep`・`sed`・`tail` は止まるが、**`cat secret*`（ワイルドカード）と `grep -r` は通る**。拒否ルールでは塞げない
+- → remo を MCP サーバー（`voicehome.remo_mcp`、mcp 2.3）にし、`claude -p` は `--tools ""` で組み込みツールなし・`mcp__remo` のみ許可にした。渡るツールは `list_appliances` と `set_aircon_power` の 2 つだけで、`.env` を読ませる指示にも「読めない」と返ることを確認
+- MCP 化後の LLM 経路は 3 回の中央値 9.3 秒（API 5〜7 秒、ツール呼び出しで 2 往復）。Bash 版と同程度。MCP サーバーの import に約 2.1 秒かかるが、claude 本体の起動と重なって見えない
 
 ## 次にやること
-1. `.env` にトークンを記入 → `uv run remo list` → `uv run remo aircon on --dry-run` → 実機で on/off
+1. 在宅時に実機で `uv run remo aircon on` / `off`
 2. `uv run python scripts/bench_latency.py --save rec.wav` でマイク録音を計測（small / medium）
 3. `uv run voicehome` で一連の流れを通す（VOICEVOX エンジンを先に起動）
