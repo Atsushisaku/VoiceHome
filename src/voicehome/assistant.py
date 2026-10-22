@@ -36,12 +36,16 @@ def handle(text: str, conversation: llm.Conversation, dry_run: bool) -> tuple[st
     # 定型で操作したら、それ以前の聞き返しは片付いたものとして忘れる
     conversation.reset()
     try:
-        if intent.action.startswith("aircon"):
-            remo.set_aircon_power(intent.action == "aircon_on", dry_run=dry_run)
+        if intent.action == "aircon_on":
+            remo.set_aircon(intent.mode, dry_run=dry_run)
+        elif intent.action == "aircon_off":
+            remo.set_aircon_power(False, dry_run=dry_run)
         else:
             remo.set_light("on" if intent.action == "light_on" else "off", dry_run=dry_run)
     except remo.RemoError as e:
         return f"操作できませんでした。{e}", "rule"
+    if intent.action == "aircon_on" and intent.mode:
+        return f"{remo.AIRCON_MODE_LABELS[intent.mode]}をつけました", "rule"
     return REPLIES[intent.action], "rule"
 
 

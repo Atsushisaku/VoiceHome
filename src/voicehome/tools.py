@@ -12,13 +12,27 @@ from . import remo
 TOOLS = [
     {
         "name": "list_appliances",
-        "description": "登録済みの家電と現在の状態を返す。エアコンは電源・モード・温度、照明は電源と使えるボタン。"
+        "description": "登録済みの家電と現在の状態を返す。エアコンは電源・モード・温度と選べるモード・温度範囲、照明は電源と使えるボタン。"
         "状態は Remo が最後に送った操作の記録で、実測ではない。",
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "set_aircon",
+        "description": "エアコンをつけ、運転モードと設定温度を変える（cool=冷房、warm=暖房、dry=除湿）。"
+        "省いた項目は今の設定のまま。温度を上げ下げするときは list_appliances で今の温度を見てから値を決める。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["cool", "warm", "dry"]},
+                "temperature": {"type": "integer", "description": "設定温度（℃）。除湿では無視される"},
+                "name": {"type": "string", "description": "複数台あるときのニックネーム。1 台なら省略"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "set_aircon_power",
-        "description": "エアコンの電源を入れる（on=true）か切る（on=false）。",
+        "description": "エアコンの電源だけを入れる（on=true）か切る（on=false）。モード・温度は前回のまま。",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -52,6 +66,8 @@ def run(name: str, args: dict) -> tuple[str, bool]:
     try:
         if name == "list_appliances":
             return "\n".join(remo.describe(a) for a in remo.list_appliances()), False
+        if name == "set_aircon":
+            return remo.set_aircon(args.get("mode"), args.get("temperature"), args.get("name"), dry_run=dry_run), False
         if name == "set_aircon_power":
             return remo.set_aircon_power(args["on"], args.get("name"), dry_run=dry_run), False
         if name == "set_light":

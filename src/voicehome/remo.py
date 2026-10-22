@@ -1,7 +1,7 @@
 """Nature Remo の家電を操作する CLI。
 
     remo list
-    remo aircon on|off [--name ニックネーム] [--dry-run]
+    remo aircon on|off [--mode cool|warm|dry] [--temp 温度] [--name ニックネーム] [--dry-run]
     remo light on|off|night|... [--name ニックネーム] [--dry-run]
 
 トークンは環境変数または .env の NATURE_REMO_TOKEN から読む。
@@ -77,16 +77,60 @@ def find_aircon(name: str | None = None) -> Appliance:
     return find_one("AC", "エアコン", name)
 
 
+AIRCON_MODE_LABELS = {"cool": "冷房", "warm": "暖房", "dry": "除湿", "blow": "送風", "auto": "自動"}
+
+
+def _aircon_modes(ac: Appliance) -> dict[str, list[str]]:
+    """モード → 指定できる温度の一覧（Remo の登録内容）。除湿など温度を持たないモードは ["0"] 等になる。"""
+    modes = ac.raw.get("aircon", {}).get("range", {}).get("modes", {})
+    return {m: v.get("temp", []) for m, v in modes.items()}
+
+
 def set_aircon_power(on: bool, name: str | None = None, dry_run: bool = False) -> str:
-    """エアコンの電源を切り替え、結果の一文を返す。"""
+    """エアコンの電源だけを切り替える（モード・温度は前回のまま）。結果の一文を返す。"""
+    if on:
+        return set_aircon(name=name, dry_run=dry_run)
     ac = find_aircon(name)
-    # Remo API の仕様: button が空文字なら電源 ON、"power-off" なら OFF
-    data = {"button": "" if on else "power-off"}
-    action = "つけ" if on else "消し"
+    data = {"button": "power-off"}
     if dry_run:
-        return f"[dry-run] {ac.nickname} を{action}ます（POST /appliances/{ac.id}/aircon_settings {data}）"
+        return f"[dry-run] {ac.nickname} を消します（POST /appliances/{ac.id}/aircon_settings {data}）"
     _request("POST", f"/appliances/{ac.id}/aircon_settings", data=data)
-    return f"{ac.nickname} を{action}ました"
+    return f"{ac.nickname} を消しました"
+
+
+def set_aircon(
+    mode: str | None = None, temp: int | None = None, name: str | None = None, dry_run: bool = False
+) -> str:
+    """エアコンをつける。mode / temp を省くと今の設定のまま。結果の一文を返す。"""
+    ac = find_aircon(name)
+    modes = _aircon_modes(ac)
+    current = ac.raw.get("settings") or {}
+    target = mode or current.get("mode")
+    if target not in modes:
+        labels = "、".join(AIRCON_MODE_LABELS.get(m, m) for m in modes)
+        raise RemoError(f"{ac.nickname} は {AIRCON_MODE_LABELS.get(target, target)} にできません。選べるモード: {labels}")
+    temps = modes[target]
+    # Remo API の仕様: button が空文字なら電源 ON。モードと温度は IR 信号にまとめて送る
+    data = {"button": "", "operation_mode": target}
+    if len(temps) <= 1:
+        # 除湿など温度の段階がないモード。温度指定は無視する
+        data["temperature"] = temps[0] if temps else ""
+        detail = AIRCON_MODE_LABELS.get(target, target)
+    else:
+        if temp is not None:
+            value = str(temp)
+        elif current.get("temp") in temps:
+            value = current["temp"]  # 指定がなければ今の温度を引き継ぐ
+        else:
+            value = temps[len(temps) // 2]
+        if value not in temps:
+            raise RemoError(f"{AIRCON_MODE_LABELS.get(target, target)}の温度は {temps[0]}〜{temps[-1]} 度です（指定: {value}）")
+        data["temperature"] = value
+        detail = f"{AIRCON_MODE_LABELS.get(target, target)} {value}度"
+    if dry_run:
+        return f"[dry-run] {ac.nickname} を{detail}でつけます（POST /appliances/{ac.id}/aircon_settings {data}）"
+    _request("POST", f"/appliances/{ac.id}/aircon_settings", data=data)
+    return f"{ac.nickname} を{detail}でつけました"
 
 
 # 照明のボタン名と、返答に使う言い方。実際に使えるボタンは機器ごとに Remo の登録内容で決まる
@@ -122,6 +166,10 @@ def describe(a: Appliance) -> str:
         s = a.raw["settings"]
         power = "OFF" if s.get("button") == "power-off" else "ON"
         line += f"  電源={power} モード={s.get('mode')} 温度={s.get('temp')}"
+        ranges = []
+        for m, temps in _aircon_modes(a).items():
+            ranges.append(f"{m}({temps[0]}-{temps[-1]})" if len(temps) > 1 else m)
+        line += f"  選べるモード={','.join(ranges)}"
     if a.type == "LIGHT" and a.raw.get("light"):
         light = a.raw["light"]
         state = light.get("state", {})
@@ -139,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list", help="登録済みの家電を一覧表示")
     ac = sub.add_parser("aircon", help="エアコンの電源操作")
     ac.add_argument("power", choices=["on", "off"])
+    ac.add_argument("--mode", choices=list(AIRCON_MODE_LABELS), help="運転モード（on のときだけ）")
+    ac.add_argument("--temp", type=int, help="設定温度（on のときだけ）")
     ac.add_argument("--name", help="エアコンのニックネーム（部分一致）。複数台あるときに指定")
     ac.add_argument("--dry-run", action="store_true", help="送信せずに内容だけ表示")
     lt = sub.add_parser("light", help="照明のボタン操作")
@@ -153,8 +203,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(describe(a))
         else:
             dry_run = args.dry_run or os.environ.get("REMO_DRY_RUN") == "1"
-            if args.command == "aircon":
-                print(set_aircon_power(args.power == "on", args.name, dry_run))
+            if args.command == "aircon" and args.power == "on":
+                print(set_aircon(args.mode, args.temp, args.name, dry_run))
+            elif args.command == "aircon":
+                print(set_aircon_power(False, args.name, dry_run))
             else:
                 print(set_light(args.button, args.name, dry_run))
     except (RemoError, requests.RequestException) as e:

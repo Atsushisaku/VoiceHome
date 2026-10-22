@@ -3,7 +3,9 @@
 import re
 from dataclasses import dataclass
 
-AIRCON = r"(エアコン|冷房|暖房|クーラー)"
+AIRCON = r"(エアコン|冷房|暖房|除湿|ドライ|クーラー)"
+# 「暖房つけて」はモードも指定している。電源だけ入れると前回のモード（冷房など）でついてしまう
+AIRCON_MODES = {"cool": r"(冷房|クーラー)", "warm": r"暖房", "dry": r"(除湿|ドライ)"}
 LIGHT = r"(照明|電気|でんき|ライト|明かり|あかり)"
 ON = r"(つけ|付け|点け|オン|入れ|いれ|起動)"
 OFF = r"(消し|けし|消す|けす|切っ|切る|きっ|オフ|止め|とめ|停止)"
@@ -16,6 +18,7 @@ MAX_LEN = 15
 @dataclass
 class Intent:
     action: str  # "aircon_on" / "aircon_off" / "light_on" / "light_off"
+    mode: str | None = None  # aircon_on のときの運転モード（cool / warm / dry）。None なら前回のまま
 
 
 def match(text: str) -> Intent | None:
@@ -28,4 +31,11 @@ def match(text: str) -> Intent | None:
     on, off = bool(re.search(ON, t)), bool(re.search(OFF, t))
     if on == off:  # どちらもない／両方ある（「つけて消して」等）は曖昧
         return None
-    return Intent(f"{'aircon' if aircon else 'light'}_{'on' if on else 'off'}")
+    if light:
+        return Intent(f"light_{'on' if on else 'off'}")
+    if off:
+        return Intent("aircon_off")
+    modes = [m for m, pattern in AIRCON_MODES.items() if re.search(pattern, t)]
+    if len(modes) > 1 or re.search(r"\d|度", t):  # モードが複数・温度指定つきは LLM に任せる
+        return None
+    return Intent("aircon_on", modes[0] if modes else None)

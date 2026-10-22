@@ -17,8 +17,14 @@ def list_appliances() -> str:
 
 
 @server.tool()
+def set_aircon(mode: str | None = None, temperature: int | None = None, name: str | None = None) -> str:
+    """エアコンをつけ、運転モード（cool=冷房 / warm=暖房 / dry=除湿）と設定温度を変える。省いた項目は今の設定のまま。"""
+    return tools.run("set_aircon", {"mode": mode, "temperature": temperature, "name": name})[0]
+
+
+@server.tool()
 def set_aircon_power(on: bool, name: str | None = None) -> str:
-    """エアコンの電源を入れる（on=true）か切る（on=false）。複数台あるときは name にニックネームを渡す。"""
+    """エアコンの電源だけを入れる（on=true）か切る（on=false）。モード・温度は前回のまま。"""
     return tools.run("set_aircon_power", {"on": on, "name": name})[0]
 
 
